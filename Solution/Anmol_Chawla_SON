@@ -1,0 +1,221 @@
+# Apriori Remember to set all buckets
+def checker(buckets,cans):        
+    global asp
+    freqsets = []
+    op = {}
+    for can in cans:
+      for bucket in buckets:
+        #a = set(can)
+        #if a.issubset(bucket):
+        if all(x in bucket for x in can):
+          if can not in op: 
+            op[can]= 1
+          else: 
+            op[can] += 1
+
+
+    for item in op:
+      supp = op[item]
+      #print("Hellooooooooooooooo",  asp)
+      if supp >= asp:
+        freqsets.append(item)
+    freqsets.sort()
+    return freqsets
+    
+
+  
+def count(buckets,cans):
+    op = {}
+    for can in cans:
+      if type(can) == int:
+        can = (can,)
+      for bucket in buckets: 
+        #if set(can).issubset(bucket):
+        if all(x in bucket for x in can):
+          if can not in op: 
+            op[can]= 1
+          else: 
+            op[can] += 1
+    return op
+    
+  
+  
+def canidate(data,k):
+        op = []
+        for i in range(0,len(data)-1):
+          for j in range(i+1,len(data)):
+            a = data[i]
+            b = data[j]
+            if ( a[:k-2] == b[:k-2]):
+              op.append( tuple(a + b[k-2:]) )
+        return op
+
+
+  
+def apriori(item_list):
+      global total
+      global support
+      global asp
+      global pr
+      pr = []
+      op = [1]
+      k =  3
+      buckets = []
+      for i in item_list:
+        hold = list(set([int(x) for x in i]))
+        buckets.append(hold)
+        
+      asp = math.ceil(support * (len(buckets) / float(total)))
+      #print("Len of buckets ", len(buckets))
+      #print("local thresh", asp)
+      
+      items = [item for sublist in buckets for item in sublist]
+      freq_singles = Counter(items)
+      freq_singles= sorted(list((ke) for ke, va in freq_singles.items() if va >= asp))
+      #freq_singles= sorted(set(list((ke) for ke, va in freq_singles.items() if va >= asp)))
+      ans = [freq_singles]
+      #print("len of freq single",len(freq_singles))
+      #print(freq_singles)
+      for i in range(0,len(ans[0])-1):
+        for j in range(i+1,len(ans[0])):
+          pr.append( tuple([ans[0][i],ans[0][j]]) ) 
+      
+      
+      pair = checker(buckets,pr)
+      #print("len of freq doubles", len(pair))
+      #print(pair)
+      ans.append(pair)
+      
+      while op != []: 
+          op = []
+          can = canidate(ans[k-2],k) 
+          can_freq = checker(buckets,can)
+          op = can_freq
+          #print("len of ", k,len(op))
+          ans.append(op)
+          k = k + 1
+      
+      ans  = list(itertools.chain.from_iterable(ans))
+      return ans
+
+
+
+# Map Phase 1
+def phase1map(itr):
+  ans = []
+  data = list(itr)
+  op = apriori(data)
+  for j in op:
+    hold = (j,1)
+    ans.append(hold)
+  yield ans
+  
+  
+  
+#Map Phase 2
+def phase2map(itr):
+  ans = []
+  buckets = []
+  global p1m
+  data = list(itr)
+  for i in data:
+    hold = list(set([int(x) for x in i]))
+    buckets.append(hold)
+    
+  op = count(buckets,p1m)
+  for item in op:
+    temp = (item,op[item])
+    ans.append(temp)
+  
+  yield ans
+
+
+
+# Main
+
+
+from pyspark import SparkContext
+import sys
+import os
+from itertools import chain, combinations
+from operator import add
+from itertools import izip
+from pyspark.sql import SparkSession
+import itertools
+#from numpy import *
+import time
+import math
+from collections import Counter
+
+
+# Setup
+sc = SparkContext('local[*]', 'SON')
+
+
+# Input arguments
+caseo  = sys.argv[1]
+case = int(caseo)
+ipfile = sys.argv[2]
+suppo = sys.argv[3]
+support = float(suppo)
+
+
+
+
+
+START_TIME = time.time()
+
+#Pre- Process data
+data = sc.textFile(ipfile, minPartitions= 2)
+data = data.map(lambda line:line.split(","))
+
+
+# Casewise execution
+
+if case == 1:
+  data = data.map(lambda x: (x[0],x[1]))
+  top = data.first()
+  alldata = data.filter(lambda x : x != top).groupByKey().map(lambda x: (list(x[1])))
+  filename = "Anmol_Chawla_SON_{}.case1-{}.txt".format(ipfile.replace(".csv",""), suppo)
+ 
+else:
+  data = data.map(lambda x: (x[1],x[0]))
+  top = data.first()
+  alldata = data.filter(lambda x : x != top).groupByKey().map(lambda x: (list(x[1])))
+  filename = "Anmol_Chawla_SON_{}.case2-{}.txt".format(ipfile.replace(".csv",""), suppo)
+  
+    
+
+total = alldata.count()
+
+
+# code start
+
+p1m = alldata.mapPartitions(phase1map).flatMap(lambda x:x).groupByKey().map(lambda x:x[0]).collect()
+p2m = alldata.mapPartitions(phase2map).flatMap(lambda x:x).reduceByKey(add).filter(lambda x: x[1]>=support ).map(lambda x:x[0]).collect()
+p2m.sort(key = lambda x: (len(x), x))
+
+# code end
+
+END_TIME = time.time()
+
+#print("len of phase 1",len(p1m))
+print(ipfile,"case",case,"support",suppo,"len op",len(p2m),"op") #,p2m
+print("Total time is",str(END_TIME-START_TIME))
+
+
+with open(filename, 'w') as caseop:
+  len_tup = 1
+  for ps in p2m:
+
+    if len_tup == len(ps) and ps != p2m[0]:
+      caseop.write(", ")
+    elif len_tup != len(ps) and ps != p2m[0]:
+      caseop.write('\n\n')
+
+    len_tup = len(ps)
+
+    if len(ps) == 1:
+       caseop.write("({})".format( ps[0] ) )
+    else:
+       caseop.write("{}".format(ps))
